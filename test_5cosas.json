@@ -1,0 +1,14 @@
+{
+  "pilar": "Educar",
+  "hook": "5 cosas que la IA hace por ti HOY",
+  "laminas": [
+    {"n":1,"rol":"cover","titulo":"5 cosas que la IA hace por ti HOY"},
+    {"n":2,"rol":"valor","titulo":"1. Contesta clientes mientras duermes"},
+    {"n":3,"rol":"valor","titulo":"2. Agenda citas sin que muevas un dedo"},
+    {"n":4,"rol":"valor","titulo":"3. Escribe tus descripciones de producto"},
+    {"n":5,"rol":"valor","titulo":"4. Resume el correo de 10 párrafos en 3 líneas"},
+    {"n":6,"rol":"valor","titulo":"5. Contesta las mismas 20 preguntas de siempre"},
+    {"n":7,"rol":"recap","titulo":"Guárdate esto"},
+    {"n":8,"rol":"cta","titulo":"Esto es solo el principio"}
+  ]
+}

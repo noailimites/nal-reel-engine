@@ -1,0 +1,14 @@
+{
+  "pilar": "Vender",
+  "hook": "Mientras él dormía, CLARI vendía",
+  "laminas": [
+    {"n":1,"rol":"cover","titulo":"Mientras él dormía, CLARI vendía"},
+    {"n":2,"rol":"contexto","titulo":"El problema de siempre"},
+    {"n":3,"rol":"valor","titulo":"Le montamos a CLARI"},
+    {"n":4,"rol":"valor","titulo":"Qué hace CLARI de verdad"},
+    {"n":5,"rol":"valor","titulo":"Los números no mienten"},
+    {"n":6,"rol":"valor","titulo":"Lo que Carlos ya no hace"},
+    {"n":7,"rol":"recap","titulo":"Esto no es ciencia ficción"},
+    {"n":8,"rol":"cta","titulo":"Queremos montarte tu propio CLARI"}
+  ]
+}
