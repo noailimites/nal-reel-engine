@@ -1,18 +1,29 @@
 #!/usr/bin/env python3
 """
 NAL Reel Engine — carrusel JSON (Notion) -> reel funk 9:16 MP4.
-Marca Café Editorial. Kinetic typography, hard cuts on beat, funk groove sintetizado.
+Marca Cafe Editorial. Kinetic typography, hard cuts on beat, funk groove sintetizado.
+
+v2 (low-memory): disenado para caber en 512MB (Render Free).
+  - Diseno se compone en espacio 1080x1920 y se exporta a 720x1280.
+  - NO escribe 600 frames: solo ~6 imagenes por tarjeta (5 de animacion + 1 estatica)
+    y ffmpeg las une con el demuxer concat usando duraciones.
+  - ffmpeg con -threads 1 y memoria liberada antes de codificar.
+
 Uso:
   python reel_engine.py --carousel row.json --out reel.mp4
-  (row.json = el contenido de la columna "JSON" de Notion, o {"carousel": {...}})
 Robusto: auto-ajusta cada texto para que NUNCA se corte.
 """
-import os, sys, json, argparse, subprocess, wave, tempfile
+import os, sys, json, argparse, subprocess, wave, tempfile, shutil, gc
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-W, H = 1080, 1920
+# Espacio de diseno (donde vive el layout validado) y salida real
+BW, BH = 1080, 1920
+OW, OH = 720, 1280
 FPS = 30
+N_ANIM = 5                      # frames de animacion por corte
+ANIM_WIN = N_ANIM / FPS         # ~0.167s
+
 FD = os.path.dirname(os.path.abspath(__file__))
 FONT_DIR = os.environ.get("NAL_FONT_DIR", os.path.join(FD, "fonts"))
 FRB = os.path.join(FONT_DIR, "Fraunces_900Black.ttf")
@@ -20,7 +31,7 @@ FRb = os.path.join(FONT_DIR, "Fraunces_700Bold.ttf")
 DMB = os.path.join(FONT_DIR, "DMSans_700Bold.ttf")
 C = dict(papel=(243,234,216), espresso=(42,30,22), terracota=(200,85,61),
          marigold=(242,169,59), salvia=(126,139,90), ciruela=(59,31,58))
-BPM = 114; BEAT = 60.0/BPM; SIX = BEAT/4
+BPM = 114; BEAT = 60.0/BPM
 
 # ---------- text helpers (auto-fit) ----------
 _scratch = ImageDraw.Draw(Image.new("RGB",(10,10)))
@@ -39,7 +50,6 @@ def wrap(text, f, maxw):
     if cur: out.append(cur)
     return out
 def fit_block(text, path, size_max, maxw, maxlines, size_min=46):
-    """Largest size where text wraps within maxlines and each line fits maxw."""
     size=size_max
     while size>=size_min:
         f=font(path,size); lines=wrap(text,f,maxw)
@@ -47,30 +57,26 @@ def fit_block(text, path, size_max, maxw, maxlines, size_min=46):
             return f,size,lines
         size-=5
     f=font(path,size_min)
-    # hard clip safeguard: truncate lines to maxlines
-    lines=wrap(text,f,maxw)[:maxlines]
-    return f,size_min,lines
+    return f,size_min,wrap(text,f,maxw)[:maxlines]
 def draw_tracked(d,xy,s,f,fill,tr):
     x,y=xy
     for ch in s: d.text((x,y),ch,font=f,fill=fill); x+=tw(ch,f)+tr
 
 # ---------- card model ----------
-# card: dict(bg, anim, beats, num, label, title, size, color, cta)
 PALETTE_CYCLE = ['papel','espresso','terracota','ciruela','papel','espresso']
 ANIM_CYCLE = ['slideU','slideL','punch','slideL','slideU','pop']
 def contrast_text(bg): return 'papel' if bg in ('espresso','terracota','ciruela','salvia') else 'espresso'
 def accent_for(bg): return 'marigold' if bg!='marigold' else 'terracota'
 
 def spec_from_carousel(cj):
+    import re
     pillar=str(cj.get('pilar','')).split('·')[0].split('-')[0].strip().upper()[:14]
     hook=cj.get('hook') or (cj.get('laminas',[{}])[0].get('titulo',''))
     body=[l for l in cj.get('laminas',[]) if l.get('rol') in ('valor','contexto','recap')][:6]
-    cards=[]
-    cards.append(dict(bg='papel', anim='punch', beats=4, label=pillar,
-                      title=hook, size=150, color='espresso', center=True))
+    cards=[dict(bg='papel', anim='punch', beats=4, label=pillar,
+                title=hook, size=150, color='espresso', center=True)]
     for i,l in enumerate(body):
         raw=str(l.get('titulo','')).strip()
-        import re
         m=re.match(r'^(\d+)\s*[·.\-]?\s*(.*)$', raw)
         num=m.group(1) if m else None
         title=(m.group(2) if m else raw).strip()
@@ -82,12 +88,11 @@ def spec_from_carousel(cj):
                       handle="@noailimites.ia"))
     return cards
 
-# ---------- base image per card ----------
+# ---------- base image (composed at 1080x1920, returned at 720x1280) ----------
 def base_image(card):
-    bg=C[card['bg']]; img=Image.new("RGB",(W,H),bg); d=ImageDraw.Draw(img)
-    draw_tracked(d,(70,80),"NO [AI] LÍMITES",font(DMB,26),
-                 C[accent_for(card['bg'])],5)
-    maxw=W-180
+    bg=C[card['bg']]; img=Image.new("RGB",(BW,BH),bg); d=ImageDraw.Draw(img)
+    draw_tracked(d,(70,80),"NO [AI] LÍMITES",font(DMB,26),C[accent_for(card['bg'])],5)
+    maxw=BW-180
     if card.get('label'):
         d.text((90,150),card['label'],font=font(FRb,50),fill=C['salvia'])
     if card.get('num'):
@@ -100,61 +105,70 @@ def base_image(card):
     f,size,lines=fit_block(card['title'],FRB,card['size'],maxw,maxlines)
     lh=int(size*1.04); blockH=len(lines)*lh
     if card.get('num'): y0=720
-    elif card.get('cta'): y0=int(H*0.30)
-    elif card.get('center'): y0=int(H/2-blockH/2)
-    else: y0=int(H/2-blockH/2)
+    elif card.get('cta'): y0=int(BH*0.30)
+    else: y0=int(BH/2-blockH/2)
     y=y0
     for ln in lines:
-        x=(W-tw(ln,f))/2 if (card.get('center') or card.get('cta')) else 90
+        x=(BW-tw(ln,f))/2 if (card.get('center') or card.get('cta')) else 90
         d.text((x,y),ln,font=f,fill=C[card['color']]); y+=lh
     if not card.get('center') and not card.get('cta'):
         d.rectangle([90,y+18,270,y+36],fill=C[accent_for(card['bg'])])
     if card.get('cta'):
         hf=font(FRb,86); hw=tw(card['handle'],hf)
-        d.rectangle([(W-180)/2,y0+230,(W+180)/2,y0+248],fill=C['terracota'])
-        d.text(((W-hw)/2,y0+300),card['handle'],font=hf,fill=C['marigold'])
-    return img
+        d.rectangle([(BW-180)/2,y0+230,(BW+180)/2,y0+248],fill=C['terracota'])
+        d.text(((BW-hw)/2,y0+300),card['handle'],font=hf,fill=C['marigold'])
+    small = img.resize((OW,OH), Image.LANCZOS)   # exportar a 720x1280
+    img.close(); del img, d
+    return small
 
-# ---------- frame animation ----------
-def render_frames(cards, frame_dir):
-    # resolve timeline
+# ---------- imagenes + lista concat (pocas escrituras) ----------
+def render_segments(cards, work):
     t=0.0
     for c in cards: c['t0']=t; c['t1']=t+c['beats']*BEAT; t=c['t1']
-    total=t; NF=int(round(total*FPS))
-    bases=[base_image(c) for c in cards]
-    def seg_at(tt):
-        for i,c in enumerate(cards):
-            if tt<c['t1']-1e-6: return i,c
-        return len(cards)-1,cards[-1]
-    for fi in range(NF):
-        tt=fi/FPS; i,c=seg_at(tt); base=bases[i]; bg=C[c['bg']]
-        local=tt-c['t0']; win=0.16
-        if local>=win:
-            frame=base
-        else:
-            p=local/win; canvas=Image.new("RGB",(W,H),bg); a=c['anim']
-            if a in('pop','punch'):
-                s=(1.18-0.18*p) if a=='pop' else (0.82+0.18*p)
-                nw,nh=int(W*s),int(H*s); sc=base.resize((nw,nh))
-                canvas.paste(sc,(int((W-nw)/2),int((H-nh)/2)))
-            elif a=='slideL': canvas.paste(base,(int(-(1-p)*340),0))
-            elif a=='slideU': canvas.paste(base,(0,int((1-p)*380)))
-            else: canvas=base
-            frame=canvas
-        frame.save(os.path.join(frame_dir,f"f{fi:04d}.jpg"),quality=92)
-    return NF, total
+    total=t
+    entries=[]   # (path, duration)
+    for i,c in enumerate(cards):
+        base=base_image(c); bg=C[c['bg']]; anim=c['anim']
+        # frames de animacion (entrada del corte)
+        for k in range(N_ANIM):
+            p=(k+1)/N_ANIM
+            canvas=Image.new("RGB",(OW,OH),bg)
+            if anim in('pop','punch'):
+                s=(1.18-0.18*p) if anim=='pop' else (0.82+0.18*p)
+                nw,nh=int(OW*s),int(OH*s)
+                sc=base.resize((nw,nh))
+                canvas.paste(sc,(int((OW-nw)/2),int((OH-nh)/2))); sc.close()
+            elif anim=='slideL': canvas.paste(base,(int(-(1-p)*OW*0.31),0))
+            elif anim=='slideU': canvas.paste(base,(0,int((1-p)*OH*0.20)))
+            else: canvas.paste(base,(0,0))
+            fp=os.path.join(work,f"c{i:02d}a{k}.jpg")
+            canvas.save(fp,quality=88); canvas.close()
+            entries.append((fp, 1.0/FPS))
+        # estatica sostenida
+        sp=os.path.join(work,f"c{i:02d}s.jpg")
+        base.save(sp,quality=88); base.close()
+        hold=max(0.1,(c['t1']-c['t0'])-ANIM_WIN)
+        entries.append((sp, hold))
+        gc.collect()
+    # archivo concat (el ultimo se repite sin duracion: requisito del demuxer)
+    lp=os.path.join(work,"list.txt")
+    with open(lp,"w") as fh:
+        for p,dur in entries:
+            fh.write(f"file '{p}'\nduration {dur:.4f}\n")
+        fh.write(f"file '{entries[-1][0]}'\n")
+    return lp, total, len(entries)
 
 # ---------- funk music (synth, royalty-free) ----------
 def make_funk(total_beats, path, sr=44100):
-    beat=60.0/BPM; six=beat/4; N=int(total_beats*beat*sr); master=np.zeros(N)
+    beat=60.0/BPM; six=beat/4; N=int(total_beats*beat*sr)
+    master=np.zeros(N, dtype=np.float32)
     def midi(n): return 440.0*2**((n-69)/12.0)
     def add(a,t):
         i=int(round(t*sr)); j=min(i+len(a),N)
-        if i<N: master[i:j]+=a[:j-i]
+        if i<N: master[i:j]+=a[:j-i].astype(np.float32)
     def pl(n,dec):
         t=np.linspace(0,n/sr,n,False); return np.exp(-t/dec)
-    def lp(x,k):
-        return x if k<=1 else np.convolve(x,np.ones(k)/k,'same')
+    def lp(x,k): return x if k<=1 else np.convolve(x,np.ones(k)/k,'same')
     def kick(v=1,dur=0.18):
         n=int(sr*dur);t=np.linspace(0,dur,n,False);f=60*np.exp(-t/0.03)+42
         return v*(np.sin(2*np.pi*np.cumsum(f)/sr)*np.exp(-t/0.09)+0.3*np.sin(2*np.pi*f*t)*np.exp(-t/0.02))
@@ -202,20 +216,25 @@ def make_funk(total_beats, path, sr=44100):
     data=(st*32767).astype(np.int16)
     with wave.open(path,'w') as wf:
         wf.setnchannels(2);wf.setsampwidth(2);wf.setframerate(sr);wf.writeframes(data.tobytes())
+    del master, st, data; gc.collect()
 
 # ---------- orchestration ----------
 def build_reel(carousel_json, out_path):
     cards=spec_from_carousel(carousel_json)
     total_beats=sum(c['beats'] for c in cards)
     work=tempfile.mkdtemp(prefix="nalreel_")
-    fr=os.path.join(work,"fr"); os.makedirs(fr)
-    NF,total=render_frames(cards,fr)
-    music=os.path.join(work,"funk.wav"); make_funk(total_beats,music)
-    subprocess.run(["ffmpeg","-y","-loglevel","error","-framerate",str(FPS),
-        "-i",os.path.join(fr,"f%04d.jpg"),"-i",music,
-        "-c:v","libx264","-crf","20","-preset","veryfast","-pix_fmt","yuv420p",
-        "-r",str(FPS),"-c:a","aac","-b:a","192k","-movflags","+faststart",
-        "-shortest",out_path],check=True)
+    try:
+        listfile, total, nimgs = render_segments(cards, work)
+        music=os.path.join(work,"funk.wav"); make_funk(total_beats, music)
+        _fcache.clear(); gc.collect()          # liberar antes de ffmpeg
+        subprocess.run(["ffmpeg","-y","-loglevel","error","-threads","1",
+            "-f","concat","-safe","0","-i",listfile,"-i",music,
+            "-r",str(FPS),"-c:v","libx264","-crf","23","-preset","veryfast",
+            "-pix_fmt","yuv420p","-c:a","aac","-b:a","128k",
+            "-movflags","+faststart","-shortest",out_path],check=True)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+        gc.collect()
     return out_path, round(total,2), len(cards)
 
 def load_carousel(path):
