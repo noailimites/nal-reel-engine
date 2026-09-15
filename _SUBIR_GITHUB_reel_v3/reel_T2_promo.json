@@ -1,0 +1,65 @@
+{
+  "pilar": "TEMPORADA 2",
+  "hook": "No te quedes por fuera otra vez",
+  "cover_sub": "Temporada 2 · Octubre 2026",
+  "cover_beats": 5,
+  "laminas": [
+    {
+      "n": 1,
+      "rol": "valor",
+      "titulo": "La Temporada 1\nse llenó.",
+      "sub": "Y mucha gente quedó fuera.",
+      "bg": "espresso",
+      "anim": "slideU",
+      "beats": 4
+    },
+    {
+      "n": 2,
+      "rol": "valor",
+      "titulo": "Solo 8 cupos\npor cápsula.",
+      "sub": "Nada más. Por eso se agota.",
+      "bg": "terracota",
+      "anim": "punch",
+      "beats": 5
+    },
+    {
+      "n": 3,
+      "rol": "valor",
+      "titulo": "Dos horarios.\nTú eliges.",
+      "bg": "papel",
+      "anim": "pop",
+      "beats": 4
+    },
+    {
+      "n": 4,
+      "rol": "valor",
+      "titulo": "Jueves\n5 a 8 PM",
+      "sub": "1 · 8 · 15 · 22 de octubre",
+      "bg": "ciruela",
+      "anim": "slideL",
+      "beats": 5
+    },
+    {
+      "n": 5,
+      "rol": "valor",
+      "titulo": "Sábados\n9 AM a 12 M",
+      "sub": "3 · 10 · 17 · 24 de octubre",
+      "bg": "marigold",
+      "anim": "slideL",
+      "beats": 5
+    },
+    {
+      "n": 6,
+      "rol": "valor",
+      "titulo": "$20 por cápsula\nen preventa.",
+      "sub": "Early Bird hasta 4 días antes · luego $25",
+      "bg": "espresso",
+      "anim": "punch",
+      "beats": 5
+    }
+  ],
+  "cta_title": "Reserva\ntu cupo",
+  "cta_handle": "noailimites.com",
+  "cta_sub": "ICAO Buencafé · Prados del Este",
+  "cta_beats": 8
+}
