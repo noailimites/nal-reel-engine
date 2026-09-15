@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NAL Reel Engine — carrusel JSON (Notion) -> reel funk 9:16 MP4.
+NAL Reel Engine v3 — carrusel JSON (Notion) -> reel funk 9:16 MP4.
 Marca Cafe Editorial. Kinetic typography, hard cuts on beat, funk groove sintetizado.
 
 v2 (low-memory): disenado para caber en 512MB (Render Free).
@@ -50,6 +50,15 @@ def wrap(text, f, maxw):
     if cur: out.append(cur)
     return out
 def fit_block(text, path, size_max, maxw, maxlines, size_min=46):
+    text=str(text)
+    if "\n" in text:
+        given=[l.strip() for l in text.split("\n") if l.strip()]
+        size=size_max
+        while size>=size_min:
+            f=font(path,size)
+            if all(tw(l,f)<=maxw for l in given): return f,size,given
+            size-=5
+        return font(path,size_min),size_min,given
     size=size_max
     while size>=size_min:
         f=font(path,size); lines=wrap(text,f,maxw)
@@ -73,19 +82,24 @@ def spec_from_carousel(cj):
     pillar=str(cj.get('pilar','')).split('·')[0].split('-')[0].strip().upper()[:14]
     hook=cj.get('hook') or (cj.get('laminas',[{}])[0].get('titulo',''))
     body=[l for l in cj.get('laminas',[]) if l.get('rol') in ('valor','contexto','recap')][:6]
-    cards=[dict(bg='papel', anim='punch', beats=4, label=pillar,
-                title=hook, size=150, color='espresso', center=True)]
+    cards=[dict(bg='papel', anim='punch', beats=int(cj.get('cover_beats',4)), label=pillar,
+                title=hook, size=150, color='espresso', center=True,
+                sub=cj.get('cover_sub'))]
     for i,l in enumerate(body):
         raw=str(l.get('titulo','')).strip()
         m=re.match(r'^(\d+)\s*[·.\-]?\s*(.*)$', raw)
         num=m.group(1) if m else None
         title=(m.group(2) if m else raw).strip()
-        bg=PALETTE_CYCLE[i%len(PALETTE_CYCLE)]
-        cards.append(dict(bg=bg, anim=ANIM_CYCLE[i%len(ANIM_CYCLE)], beats=4,
-                          num=num, title=title, size=140, color=contrast_text(bg)))
-    cards.append(dict(bg='espresso', anim='pop', beats=8, cta=True,
-                      title="Sígueme.", size=170, color='papel',
-                      handle="@noailimites.ia"))
+        bg=l.get('bg') or PALETTE_CYCLE[i%len(PALETTE_CYCLE)]
+        if bg not in C: bg=PALETTE_CYCLE[i%len(PALETTE_CYCLE)]
+        cards.append(dict(bg=bg, anim=l.get('anim') or ANIM_CYCLE[i%len(ANIM_CYCLE)],
+                          beats=int(l.get('beats',4)),
+                          num=num, title=title, size=140, color=contrast_text(bg),
+                          sub=l.get('sub')))
+    cards.append(dict(bg='espresso', anim='pop', beats=int(cj.get('cta_beats',8)), cta=True,
+                      title=cj.get('cta_title') or "Sígueme.", size=170, color='papel',
+                      handle=cj.get('cta_handle') or "@noailimites.ia",
+                      sub=cj.get('cta_sub')))
     return cards
 
 # ---------- base image (composed at 1080x1920, returned at 720x1280) ----------
@@ -111,12 +125,25 @@ def base_image(card):
     for ln in lines:
         x=(BW-tw(ln,f))/2 if (card.get('center') or card.get('cta')) else 90
         d.text((x,y),ln,font=f,fill=C[card['color']]); y+=lh
-    if not card.get('center') and not card.get('cta'):
+    if card.get('sub') and not card.get('cta'):
+        sf,ssz,slines=fit_block(card['sub'],DMB,66,maxw,2,size_min=34)
+        ys=y+40
+        for ln in slines:
+            xs=(BW-tw(ln,sf))/2 if card.get('center') else 90
+            d.text((xs,ys),ln,font=sf,fill=C[accent_for(card['bg'])]); ys+=int(ssz*1.15)
+        y=ys
+    if not card.get('center') and not card.get('cta') and not card.get('sub'):
         d.rectangle([90,y+18,270,y+36],fill=C[accent_for(card['bg'])])
     if card.get('cta'):
-        hf=font(FRb,86); hw=tw(card['handle'],hf)
-        d.rectangle([(BW-180)/2,y0+230,(BW+180)/2,y0+248],fill=C['terracota'])
-        d.text(((BW-hw)/2,y0+300),card['handle'],font=hf,fill=C['marigold'])
+        hf,hsz,hlines=fit_block(card['handle'],FRb,86,maxw,1,size_min=44)
+        d.rectangle([(BW-180)/2,y+70,(BW+180)/2,y+88],fill=C['terracota'])
+        hy=y+150
+        d.text(((BW-tw(hlines[0],hf))/2,hy),hlines[0],font=hf,fill=C['marigold'])
+        if card.get('sub'):
+            sf,ssz,slines=fit_block(card['sub'],DMB,56,maxw,2,size_min=32)
+            ys=hy+int(hsz*1.6)
+            for ln in slines:
+                d.text(((BW-tw(ln,sf))/2,ys),ln,font=sf,fill=C['salvia']); ys+=int(ssz*1.2)
     small = img.resize((OW,OH), Image.LANCZOS)   # exportar a 720x1280
     img.close(); del img, d
     return small
